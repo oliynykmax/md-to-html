@@ -86,7 +86,7 @@ Autolink: https://github.com
 
 ## Line Breaks
 
-Line 1  
+Line 1
 Line 2
 
 Line 1\
@@ -146,7 +146,7 @@ Here is a footnote[^1].
 Another footnote[^2].
 
 [^1]: First footnote.
-[^2]: Second footnote with  
+[^2]: Second footnote with
      multiple lines.
 
 ## Alerts

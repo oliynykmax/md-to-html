@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,7 +28,32 @@ func convertToHtml(in []byte) (out []byte, err error) {
 	footer := []byte("\n</body>\n</html>\n")
 
 	out = append(out, header...)
-	out = append(out, in...)
+
+	var processed []byte
+	// loop to process each string and the apply the formats in html way
+	for part := range bytes.SplitSeq(in, []byte("\n")) {
+		trimmed := bytes.TrimSpace(part)
+
+		l := 0
+		for ; l < len(trimmed) && l < 6; l++ {
+			if trimmed[l] != '#' {
+				break
+			}
+		}
+
+		if l > 0 && len(trimmed) > l && trimmed[l] == ' ' {
+			// It's a header, wrap in <h1>..<h6>
+			processed = append(processed, []byte("<h"+string('0'+l)+">")...)
+			processed = append(processed, trimmed[l+1:]...)
+			processed = append(processed, []byte("</h"+string('0'+l)+">")...)
+		} else {
+			processed = append(processed, part...)
+		}
+		processed = append(processed, '\n')
+
+		out = append(out, processed...)
+	}
+
 	out = append(out, footer...)
 
 	return
