@@ -1,6 +1,6 @@
 # GitHub Markdown Test File
 
-This file includes all GitHub Flavored Markdown formatting options and their cross variants for testing purposes.
+**bold *italic** text*
 
 ## Headings
 
