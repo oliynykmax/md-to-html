@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,20 +21,8 @@ var (
 	strikeStart = []byte("<del><s>")
 	strikeEnd   = []byte("</s></del>")
 
-	underlineStart = []byte("<u>")
-	underlineEnd   = []byte("</u>")
-
-	codeStart = []byte("<code>")
-	codeEnd   = []byte("</code>")
-
 	codeBlockStart = []byte("<pre><code>")
 	codeBlockEnd   = []byte("</code></pre>")
-
-	smallStart = []byte("<small>")
-	smallEnd   = []byte("</small>")
-
-	markStart = []byte("<mark>")
-	markEnd   = []byte("</mark>")
 
 	header = []byte(
 		"<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<title>Document</title>\n</head>\n<body>\n",
@@ -174,77 +163,85 @@ func createCleanTags(bold, italic, strike []int) []TagPos {
 	return cleaned
 }
 
-func buildOutput(part []byte, cleaned []TagPos) []byte {
+func buildOutput(part []byte, cleaned []TagPos, counter int) ([]byte, map[string][]byte, int) {
 	processed := make([]byte, 0, len(part))
+	inlineMap := make(map[string][]byte)
 
 	last := 0
-
 	for _, t := range cleaned {
 		processed = append(processed, part[last:t.Index]...)
-		var html []byte
 		info := formatMap[t.Type]
+		var html []byte
 		if t.Start {
 			html = info.HtmlStart
 		} else {
 			html = info.HtmlEnd
 		}
-		processed = append(processed, html...)
+		placeholder := fmt.Sprintf("%%INLINE_%d%%", counter)
+		counter++
+		inlineMap[placeholder] = html
+		processed = append(processed, []byte(placeholder)...)
 		last = t.Index + info.MdLen
 	}
 
 	processed = append(processed, part[last:]...)
-
-	return processed
+	return processed, inlineMap, counter
 }
 
-func processInlineFormatting(part []byte) []byte {
+func processInlineFormatting(part []byte, startCounter int) ([]byte, map[string][]byte, int) {
 	bold, italic, strike := findMarkers(part)
-
 	cleaned := createCleanTags(bold, italic, strike)
-
-	return buildOutput(part, cleaned)
+	return buildOutput(part, cleaned, startCounter)
 }
 
 func processCodeBlocks(in []byte) ([]byte, map[string][]byte) {
-	lines := bytes.Split(in, []byte("\n"))
 	var out []byte
 	codeBlocks := make(map[string][]byte)
 	counter := 0
-	i := 0
-	for i < len(lines) {
-		line := lines[i]
-		if bytes.HasPrefix(line, []byte("```")) {
-			lang, _ := bytes.CutPrefix(line, []byte("```"))
-			lang = bytes.TrimSpace(lang)
-			var codeContent []byte
-			i++
-			for i < len(lines) && !bytes.HasPrefix(lines[i], []byte("```")) {
-				codeContent = append(codeContent, lines[i]...)
-				codeContent = append(codeContent, '\n')
-				i++
+	inBlock := false
+	var lang []byte
+	var codeContent []byte
+	for line := range bytes.SplitSeq(in, []byte("\n")) {
+		if !inBlock {
+			if bytes.HasPrefix(line, []byte("```")) {
+				l, _ := bytes.CutPrefix(line, []byte("```"))
+				lang = bytes.TrimSpace(l)
+				inBlock = true
+				codeContent = codeContent[:0]
+			} else {
+				out = append(out, line...)
+				out = append(out, '\n')
 			}
-			if i < len(lines) {
-				i++ // skip closing ```
-			}
-			placeholder := fmt.Sprintf("__CODEBLOCK_%d__", counter)
-			counter++
-			out = append(out, []byte(placeholder)...)
-			out = append(out, '\n')
-			var html []byte
-			html = append(html, codeBlockStart...)
-			if len(lang) > 0 {
-				html = append(html, []byte(` class="language-`+string(lang)+`"`)...)
-			}
-			html = append(html, '>')
-			html = append(html, codeContent...)
-			html = append(html, codeBlockEnd...)
-			html = append(html, '\n')
-			codeBlocks[placeholder] = html
 		} else {
-			out = append(out, line...)
-			out = append(out, '\n')
-			i++
+			if bytes.HasPrefix(line, []byte("```")) {
+				placeholder := fmt.Sprintf("%%CODEBLOCK_%d%%", counter)
+				counter++
+				out = append(out, []byte(placeholder)...)
+				out = append(out, '\n')
+				var html []byte
+				html = append(html, codeBlockStart...)
+				if len(lang) > 0 {
+					html = append(html, []byte(` class="language-`+string(lang)+`"`)...)
+				}
+				html = append(html, '>')
+				html = append(html, codeContent...)
+				html = append(html, codeBlockEnd...)
+				html = append(html, '\n')
+				codeBlocks[placeholder] = html
+				inBlock = false
+				lang = nil
+				codeContent = codeContent[:0]
+			} else {
+				codeContent = append(codeContent, line...)
+				codeContent = append(codeContent, '\n')
+			}
 		}
+	}
+	if inBlock {
+		out = append(out, []byte("```")...)
+		out = append(out, lang...)
+		out = append(out, '\n')
+		out = append(out, codeContent...)
 	}
 	return out, codeBlocks
 }
@@ -255,14 +252,18 @@ func convertToHtml(in []byte) (out []byte) {
 
 	in, codeBlocks := processCodeBlocks(in)
 
-	// loop to process each string and the apply the formats in html way
+	inlinePlaceholders := make(map[string][]byte)
+	inlineCounter := 0
 	for part := range bytes.SplitSeq(in, []byte("\n")) {
-		processed := processInlineFormatting(part)
+		processed, ph, next := processInlineFormatting(part, inlineCounter)
+		inlineCounter = next
+		maps.Copy(inlinePlaceholders, ph)
 		processed = processHeader(processed)
 		out = append(out, processed...)
 	}
-
-	// replace placeholders with code block HTML
+	for placeholder, html := range inlinePlaceholders {
+		out = bytes.ReplaceAll(out, []byte(placeholder), html)
+	}
 	for placeholder, html := range codeBlocks {
 		out = bytes.ReplaceAll(out, []byte(placeholder), html)
 	}
